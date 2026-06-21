@@ -8,7 +8,9 @@
   "nodes": [
     {
       "parameters": {
-        "updates": ["message"],
+        "updates": [
+          "message"
+        ],
         "additionalFields": {}
       },
       "id": "db000000-0000-4000-8000-000000000001",
@@ -16,7 +18,10 @@
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
       "webhookId": "deploybot-webhook-0001",
-      "position": [-400, 400],
+      "position": [
+        -400,
+        400
+      ],
       "credentials": {
         "telegramApi": {
           "id": "deploybotcredtg001",
@@ -30,9 +35,24 @@
         "includeOtherFields": true,
         "assignments": {
           "assignments": [
-            { "id": "cfg-allowed",  "name": "allowedChatIds", "value": "",                               "type": "string" },
-            { "id": "cfg-language", "name": "language",        "value": "Polish",                         "type": "string" },
-            { "id": "cfg-base",     "name": "base",            "value": "https://opencode.ai/zen/go/v1", "type": "string" }
+            {
+              "id": "cfg-allowed",
+              "name": "allowedChatIds",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "cfg-language",
+              "name": "language",
+              "value": "Polish",
+              "type": "string"
+            },
+            {
+              "id": "cfg-base",
+              "name": "base",
+              "value": "https://opencode.ai/zen/go/v1",
+              "type": "string"
+            }
           ]
         },
         "options": {}
@@ -41,7 +61,10 @@
       "name": "Config",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [-220, 400]
+      "position": [
+        -220,
+        400
+      ]
     },
     {
       "parameters": {
@@ -72,7 +95,10 @@
       "name": "Whitelist",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-40, 400]
+      "position": [
+        -40,
+        400
+      ]
     },
     {
       "parameters": {},
@@ -80,17 +106,23 @@
       "name": "Ignore",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [160, 620]
+      "position": [
+        160,
+        620
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// __DEPLOYBOT_BUNDLE__\n\n// ── Router: full state-machine for deploybot ──────────────────────────────────\n// Reads the incoming Telegram message, decides what to do next, emits one item\n// with fields: { action, chatId, text?, payload? }\n// action = 'ask' | 'submit' | 'reply'\n//\n// The LLM intake call (clarifying questions) is made here via fetch() so the\n// graph stays minimal. The runner POST is also done here for the same reason.\n// Telegram delivery is handled by the downstream \"Telegram Send\" node.\n// ─────────────────────────────────────────────────────────────────────────────\n\nconst cfg  = $('Config').first().json;\nconst base = cfg.base     || 'https://opencode.ai/zen/go/v1';\nconst lang = cfg.language || 'Polish';\n\nconst msg    = $input.first().json.message || {};\nconst chatId = String(msg.chat && msg.chat.id ? msg.chat.id : '');\nconst text   = (msg.text || '').trim();\n\nconst store = this.getWorkflowStaticData('global');\nconst allowed = parseAllowed(cfg.allowedChatIds);\n\n// session ─────────────────────────────────────────────────────────────────────\nconst session = getSession(store, chatId);\n\n// /reset command ──────────────────────────────────────────────────────────────\nif (/^\\/reset\\b/i.test(text)) {\n  reset(session);\n  return [{ json: { action: 'reply', chatId, text: 'Zresetowałem sesję. Opisz aplikację, którą chcesz zbudować.' } }];\n}\n\n// /start or /help ─────────────────────────────────────────────────────────────\nif (/^\\/start\\b|^\\/help\\b/i.test(text)) {\n  return [{ json: {\n    action: 'reply', chatId,\n    text: 'Cześć! Opisz aplikację webową, którą chcesz zbudować, a ja zajmę się resztą.\\n\\nKomendy:\\n/reset — zacznij od nowa'\n  } }];\n}\n\n// ── Phase: idle ──────────────────────────────────────────────────────────────\nif (session.phase === 'idle') {\n  if (!text) {\n    return [{ json: { action: 'reply', chatId, text: 'Opisz aplikację, którą chcesz zbudować.' } }];\n  }\n  // Call the intake LLM to get clarifying questions\n  const systemPrompt = intakeSystemPrompt(lang);\n  const llmBody = {\n    model: 'openai/gpt-4o-mini',\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user',   content: text }\n    ],\n    max_tokens: 512\n  };\n  let llmText = '';\n  try {\n    const resp = await fetch(base + '/chat/completions', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify(llmBody)\n    });\n    const data = await resp.json();\n    llmText = data?.choices?.[0]?.message?.content || '';\n  } catch (e) {\n    llmText = '{\"questions\":[]}';\n  }\n  const { questions } = parseIntake(llmText);\n  // Store draft in session\n  const draft = {\n    chatId,\n    description: text,\n    questions,\n    answers: {},\n    answerIndex: 0\n  };\n  if (questions.length === 0) {\n    // No questions — ask for subdomain immediately\n    startClarifying(session, draft);\n    session.draft.awaitingSubdomain = true;\n    return [{ json: {\n      action: 'ask', chatId,\n      text: 'Jak ma się nazywać subdomena Twojej aplikacji? (np. `moj-projekt`)'\n    } }];\n  }\n  startClarifying(session, draft);\n  return [{ json: { action: 'ask', chatId, text: questions[0] } }];\n}\n\n// ── Phase: clarifying ─────────────────────────────────────────────────────────\nif (session.phase === 'clarifying') {\n  const draft = session.draft;\n\n  // Are we waiting for a subdomain answer?\n  if (draft.awaitingSubdomain) {\n    const sub = extractSubdomain(text) || text.toLowerCase().replace(/[^a-z0-9-]/g, '');\n    if (!isValidSubdomain(sub)) {\n      return [{ json: {\n        action: 'ask', chatId,\n        text: 'Subdomena jest nieprawidłowa. Użyj małych liter, cyfr i myślników (np. `moj-projekt`).'\n      } }];\n    }\n    draft.subdomain = sub;\n    // Ready to submit!\n    markBuilding(session);\n    const payload = buildJobPayload(draft, sub);\n    // POST to runner\n    try {\n      await fetch(RUNNER_URL, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify(payload)\n      });\n    } catch (e) {\n      reset(session);\n      return [{ json: {\n        action: 'reply', chatId,\n        text: 'Nie udało się zlecić zadania (runner niedostępny). Spróbuj ponownie.'\n      } }];\n    }\n    reset(session);\n    return [{ json: {\n      action: 'reply', chatId,\n      text: `Zadanie przyjęte! Twoja aplikacja będzie dostępna pod https://${sub}.kciepka.pl — buduję...`\n    } }];\n  }\n\n  // Still collecting answers to questions\n  const qi = draft.answerIndex || 0;\n  const q  = draft.questions[qi];\n  draft.answers[q] = text;\n  draft.answerIndex = qi + 1;\n\n  if (draft.answerIndex < draft.questions.length) {\n    // More questions\n    return [{ json: { action: 'ask', chatId, text: draft.questions[draft.answerIndex] } }];\n  }\n  // All answered — ask for subdomain\n  draft.awaitingSubdomain = true;\n  return [{ json: {\n    action: 'ask', chatId,\n    text: 'Jak ma się nazywać subdomena Twojej aplikacji? (np. `moj-projekt`)'\n  } }];\n}\n\n// ── Phase: building ───────────────────────────────────────────────────────────\nif (session.phase === 'building') {\n  return [{ json: {\n    action: 'reply', chatId,\n    text: 'Twoja aplikacja jest już w kolejce do budowania. Poczekaj chwilę lub wpisz /reset, aby zacząć od nowa.'\n  } }];\n}\n\n// Fallback\nreturn [{ json: { action: 'reply', chatId, text: 'Opisz aplikację, którą chcesz zbudować.' } }];\n"
+        "jsCode": "// __DEPLOYBOT_BUNDLE__\n\n// ── Router: full state-machine for deploybot ──────────────────────────────────\n// Reads the incoming Telegram message, decides what to do next, emits one item\n// with fields: { action, chatId, text?, payload? }\n// action = 'ask' | 'submit' | 'reply'\n//\n// The LLM intake call (clarifying questions) is made here via fetch() so the\n// graph stays minimal. The runner POST is also done here for the same reason.\n// Telegram delivery is handled by the downstream \"Telegram Send\" node.\n// ─────────────────────────────────────────────────────────────────────────────\n\nconst cfg  = $('Config').first().json;\nconst base = cfg.base     || 'https://opencode.ai/zen/go/v1';\nconst lang = cfg.language || 'Polish';\n\nconst msg    = $input.first().json.message || {};\nconst chatId = String(msg.chat && msg.chat.id ? msg.chat.id : '');\nconst text   = (msg.text || '').trim();\n\nconst store = this.getWorkflowStaticData('global');\n\n// session ─────────────────────────────────────────────────────────────────────\nconst session = getSession(store, chatId);\n\n// /reset command ──────────────────────────────────────────────────────────────\nif (/^\\/reset\\b/i.test(text)) {\n  reset(session);\n  return [{ json: { action: 'reply', chatId, text: 'Zresetowałem sesję. Opisz aplikację, którą chcesz zbudować.' } }];\n}\n\n// /start or /help ─────────────────────────────────────────────────────────────\nif (/^\\/start\\b|^\\/help\\b/i.test(text)) {\n  return [{ json: {\n    action: 'reply', chatId,\n    text: 'Cześć! Opisz aplikację webową, którą chcesz zbudować, a ja zajmę się resztą.\\n\\nKomendy:\\n/reset — zacznij od nowa'\n  } }];\n}\n\n// ── Phase: idle ──────────────────────────────────────────────────────────────\nif (session.phase === 'idle') {\n  if (!text) {\n    return [{ json: { action: 'reply', chatId, text: 'Opisz aplikację, którą chcesz zbudować.' } }];\n  }\n  // Call the intake LLM to get clarifying questions\n  const systemPrompt = intakeSystemPrompt(lang);\n  const llmBody = {\n    model: 'openai/gpt-4o-mini',\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user',   content: text }\n    ],\n    max_tokens: 512\n  };\n  let llmText = '';\n  try {\n    const resp = await fetch(base + '/chat/completions', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ($env.OPENCODE_API_KEY || '') },\n      body: JSON.stringify(llmBody)\n    });\n    if (!resp.ok) { llmText = '{\"questions\":[]}'; } else {\n    const data = await resp.json();\n    llmText = data?.choices?.[0]?.message?.content || ''; }\n  } catch (e) {\n    llmText = '{\"questions\":[]}';\n  }\n  const { questions } = parseIntake(llmText);\n  // Store draft in session\n  const draft = {\n    chatId,\n    description: text,\n    questions,\n    answers: {},\n    answerIndex: 0\n  };\n  if (questions.length === 0) {\n    // No questions — ask for subdomain immediately\n    startClarifying(session, draft);\n    session.draft.awaitingSubdomain = true;\n    return [{ json: {\n      action: 'ask', chatId,\n      text: 'Jak ma się nazywać subdomena Twojej aplikacji? (np. `moj-projekt`)'\n    } }];\n  }\n  startClarifying(session, draft);\n  return [{ json: { action: 'ask', chatId, text: questions[0] } }];\n}\n\n// ── Phase: clarifying ─────────────────────────────────────────────────────────\nif (session.phase === 'clarifying') {\n  const draft = session.draft;\n\n  // Are we waiting for a subdomain answer?\n  if (draft.awaitingSubdomain) {\n    const sub = extractSubdomain(text) || text.toLowerCase().replace(/[^a-z0-9-]/g, '');\n    if (!isValidSubdomain(sub)) {\n      return [{ json: {\n        action: 'ask', chatId,\n        text: 'Subdomena jest nieprawidłowa. Użyj małych liter, cyfr i myślników (np. `moj-projekt`).'\n      } }];\n    }\n    draft.subdomain = sub;\n    // Ready to submit!\n    markBuilding(session);\n    const payload = buildJobPayload(draft, sub);\n    // POST to runner\n    try {\n      await fetch(RUNNER_URL, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify(payload)\n      });\n    } catch (e) {\n      reset(session);\n      return [{ json: {\n        action: 'reply', chatId,\n        text: 'Nie udało się zlecić zadania (runner niedostępny). Spróbuj ponownie.'\n      } }];\n    }\n    reset(session);\n    return [{ json: {\n      action: 'reply', chatId,\n      text: 'Zadanie przyjęte! Buduję aplikację — wyślę link, gdy będzie gotowa.'\n    } }];\n  }\n\n  // Still collecting answers to questions\n  const qi = draft.answerIndex || 0;\n  const q  = draft.questions[qi];\n  draft.answers[q] = text;\n  draft.answerIndex = qi + 1;\n\n  if (draft.answerIndex < draft.questions.length) {\n    // More questions\n    return [{ json: { action: 'ask', chatId, text: draft.questions[draft.answerIndex] } }];\n  }\n  // All answered — ask for subdomain\n  draft.awaitingSubdomain = true;\n  return [{ json: {\n    action: 'ask', chatId,\n    text: 'Jak ma się nazywać subdomena Twojej aplikacji? (np. `moj-projekt`)'\n  } }];\n}\n\n// ── Phase: building ───────────────────────────────────────────────────────────\nif (session.phase === 'building') {\n  return [{ json: {\n    action: 'reply', chatId,\n    text: 'Twoja aplikacja jest już w kolejce do budowania. Poczekaj chwilę lub wpisz /reset, aby zacząć od nowa.'\n  } }];\n}\n\n// Fallback\nreturn [{ json: { action: 'reply', chatId, text: 'Opisz aplikację, którą chcesz zbudować.' } }];\n"
       },
       "id": "db000000-0000-4000-8000-000000000005",
       "name": "Router",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [200, 400]
+      "position": [
+        200,
+        400
+      ]
     },
     {
       "parameters": {
@@ -104,7 +136,10 @@
       "name": "Telegram Send",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [440, 400],
+      "position": [
+        440,
+        400
+      ],
       "credentials": {
         "telegramApi": {
           "id": "deploybotcredtg001",
@@ -117,31 +152,51 @@
     "Telegram Trigger": {
       "main": [
         [
-          { "node": "Config", "type": "main", "index": 0 }
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Config": {
       "main": [
         [
-          { "node": "Whitelist", "type": "main", "index": 0 }
+          {
+            "node": "Whitelist",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Whitelist": {
       "main": [
         [
-          { "node": "Router", "type": "main", "index": 0 }
+          {
+            "node": "Router",
+            "type": "main",
+            "index": 0
+          }
         ],
         [
-          { "node": "Ignore", "type": "main", "index": 0 }
+          {
+            "node": "Ignore",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "Router": {
       "main": [
         [
-          { "node": "Telegram Send", "type": "main", "index": 0 }
+          {
+            "node": "Telegram Send",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
