@@ -50,5 +50,5 @@ export function buildUpdatePrompt(job) {
 export function buildCommand(workdir) {
   // --format json streams structured LLM-inference events to stdout (and avoids the TUI
   // renderer hanging when run headless without a TTY). Prompt is read from the workspace.
-  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --format json`;
+  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --format json < /dev/null`;
 }

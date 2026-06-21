@@ -3,7 +3,13 @@ import { spawn } from 'node:child_process';
 
 export function sh(cmd, { timeoutMs = 0, cwd, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', ['-lc', cmd], { cwd, env: env ? { ...process.env, ...env } : process.env });
+    // stdin = 'ignore' (/dev/null): this runner is non-interactive, and a piped stdin that never
+    // closes makes some tools (e.g. opencode) block forever at startup waiting on input.
+    const child = spawn('bash', ['-lc', cmd], {
+      cwd,
+      env: env ? { ...process.env, ...env } : process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let stdout = '', stderr = '', timedOut = false, timer = null;
     if (timeoutMs > 0) {
       timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
