@@ -27,6 +27,26 @@ export function buildPrompt(job) {
   ].join('\n');
 }
 
+export function buildUpdatePrompt(job) {
+  return [
+    'You are an autonomous engineering agent. UPDATE the existing web app in this directory per the change request below.',
+    'The app source, its `Dockerfile`, and `.deploybot/app.json` already exist here — modify them in place.',
+    'Operate fully autonomously: never wait for human input; choose the best option and proceed. Use TDD.',
+    '',
+    'HARD CONTRACT — your task is not done until ALL of these remain true after your changes:',
+    '1. The app still builds and runs from the `Dockerfile` at the repo root.',
+    '2. The container listens on a single HTTP port.',
+    '3. `.deploybot/app.json` still contains exactly {"containerPort": <the port number>}.',
+    '4. A local container smoke-test returns a 2xx/3xx HTTP response on that port.',
+    '',
+    'Keep the same lightweight stack (static / single Node or Python container, optional SQLite).',
+    'Do NOT change the subdomain or introduce multi-container setups.',
+    '',
+    '--- CHANGE REQUEST ---',
+    job.description,
+  ].join('\n');
+}
+
 export function buildCommand(workdir) {
   // opencode reads OPENCODE_API_KEY / config from the environment; prompt is piped via a heredoc file.
   return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)"`;

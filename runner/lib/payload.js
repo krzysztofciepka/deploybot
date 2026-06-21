@@ -19,6 +19,7 @@ export function validateJob(raw) {
     subdomain: sub,
     appName: sub,
     public: raw.public === false ? false : true,
+    update: raw.update === true,
   };
   return { ok: true, job };
 }

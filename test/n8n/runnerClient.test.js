@@ -13,3 +13,8 @@ test('assembles the runner job payload', () => {
 test('runner url targets the docker bridge', () => {
   assert.equal(RUNNER_URL, 'http://172.17.0.1:8787/jobs');
 });
+
+test('update param controls the update flag', () => {
+  assert.equal(buildJobPayload({ chatId: 1, description: 'x' }, 'clock').update, false);
+  assert.equal(buildJobPayload({ chatId: 1, description: 'x' }, 'clock', true).update, true);
+});

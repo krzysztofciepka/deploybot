@@ -1,6 +1,6 @@
 export function getSession(store, chatId) {
   const key = `chat:${chatId}`;
-  if (!store[key]) store[key] = { phase: 'idle', draft: null };
+  if (!store[key]) store[key] = { phase: 'idle', draft: null, currentApp: null };
   return store[key];
 }
 export function startClarifying(session, draft) {
@@ -13,4 +13,5 @@ export function markBuilding(session) {
 export function reset(session) {
   session.phase = 'idle';
   session.draft = null;
+  session.currentApp = null;
 }

@@ -18,3 +18,11 @@ test('transitions idle -> clarifying -> building -> idle', () => {
   assert.equal(s.phase, 'idle');
   assert.equal(s.draft, null);
 });
+
+test('reset clears currentApp', () => {
+  const store = {};
+  const s = getSession(store, 9);
+  s.currentApp = 'clock';
+  reset(s);
+  assert.equal(s.currentApp, null);
+});

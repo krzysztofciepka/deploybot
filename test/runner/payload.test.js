@@ -44,3 +44,8 @@ test('rejects invalid subdomain label with shell-injection chars', () => {
   assert.equal(r.ok, false);
   assert.match(r.error, /invalid subdomain label/);
 });
+
+test('update flag defaults false and passes through', () => {
+  assert.equal(validateJob({ chatId: 1, description: 'x', subdomain: 'clock' }).job.update, false);
+  assert.equal(validateJob({ chatId: 1, description: 'x', subdomain: 'clock', update: true }).job.update, true);
+});

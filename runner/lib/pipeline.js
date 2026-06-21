@@ -3,7 +3,7 @@ import { validateAppName } from './names.js';
 import { addBlock, removeBlock } from './caddy.js';
 import { usedPorts, pickPort } from './ports.js';
 import { availableBytes, hasHeadroom } from './disk.js';
-import { buildPrompt, buildCommand } from './opencode.js';
+import { buildPrompt, buildUpdatePrompt, buildCommand } from './opencode.js';
 import { pushCommands } from './github.js';
 import { rollbackCommands } from './rollback.js';
 
@@ -28,11 +28,12 @@ export async function runJob(job, deps) {
   const app = job.appName;
   const dir = `/opt/apps/${app}`;
   const token = env.TELEGRAM_BOT_TOKEN;
-  const timeoutMs = Number(env.JOB_TIMEOUT_MS || 1200000);
+  const timeoutMs = Number(env.JOB_TIMEOUT_MS || 3600000); // default 1h
   const floor = Number(env.DISK_FLOOR_BYTES || 2000000000);
   // Allow test injection of retry delays via env (default to brief values in production)
   const localRetryDelayMs = Number(env.RETRY_DELAY_LOCAL_MS || 2000);
   const publicRetryDelayMs = Number(env.RETRY_DELAY_PUBLIC_MS || 3000);
+  const logFile = `${dir}/.deploybot/build.log`;
   let caddyAdded = false;
 
   // milestone notifier — best-effort, never lets a Telegram hiccup break the build
@@ -51,11 +52,84 @@ export async function runJob(job, deps) {
     return { ok: false, error: msg };
   };
 
+  const dirExists = (await sh(`[ -d ${dir} ] && echo yes || echo no`)).stdout.trim() === 'yes';
+
+  // ===== UPDATE an existing app, in place. A failed update never destroys the running version. =====
+  if (job.update && dirExists) {
+    const updateFail = async (msg) => {
+      await sendMessage(token, job.chatId, `❌ Aktualizacja „${app}" nie powiodła się: ${msg}\nPoprzednia wersja działa dalej.`);
+      return { ok: false, error: msg };
+    };
+    await notify(`🔧 Aktualizuję aplikację „${app}"…`);
+
+    // reuse the existing host port so the Caddy block stays valid
+    const portOut = await sh(`docker port ${app} 2>/dev/null | head -1`);
+    const pm = (portOut.stdout || '').match(/:(\d+)\s*$/);
+    let hostPort = pm ? Number(pm[1]) : null;
+
+    // disk guard
+    let df = await sh('df -B1 /');
+    if (!hasHeadroom(availableBytes(df.stdout), floor)) {
+      await sh('docker builder prune -f');
+      df = await sh('df -B1 /');
+      if (!hasHeadroom(availableBytes(df.stdout), floor)) return updateFail('za mało miejsca na dysku');
+    }
+
+    await sh(`mkdir -p ${dir}/.deploybot`);
+    await writeFile(`${dir}/.deploybot/prompt.txt`, buildUpdatePrompt(job));
+    await notify('🤖 Agent wprowadza zmiany… (podgląd: /status)');
+    const oc = await sh(`${buildCommand(dir)} > ${logFile} 2>&1`, { timeoutMs });
+    if (oc.code !== 0) return updateFail(`agent nie ukończył zmian (kod ${oc.code})`);
+
+    let containerPort;
+    try { containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`)).containerPort; }
+    catch { return updateFail('brak .deploybot/app.json'); }
+    if (!Number.isInteger(containerPort)) return updateFail('nieprawidłowy containerPort');
+
+    await notify('🔨 Buduję nowy obraz…');
+    const build = await sh(`docker build -t ${app} ${dir} >> ${logFile} 2>&1`, { timeoutMs });
+    if (build.code !== 0) return updateFail('docker build nie powiódł się');
+
+    if (!hostPort) {
+      const ps = await sh(`docker ps --format '{{.Ports}}'`);
+      hostPort = pickPort(usedPorts(ps.stdout));
+    }
+    await notify('🚀 Podmieniam kontener…');
+    await sh(`docker rm -f ${app} 2>/dev/null || true`);
+    const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
+    if (run.code !== 0) return updateFail('docker run nie powiódł się');
+
+    // make sure Caddy routes this subdomain to the current port
+    const caddyText = await readFile(CADDYFILE);
+    if (!caddyText.includes(`${app}.s.ciepka.com`) || !caddyText.includes(`localhost:${hostPort}`)) {
+      await writeFile(CADDYFILE, addBlock(removeBlock(caddyText, app), app, hostPort));
+      await sh('caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy');
+    }
+
+    const localOk = await retry(async () => {
+      const up = await sh(`docker ps --filter name=^/${app}$ --format '{{.Status}}'`);
+      if (!/^Up/.test(up.stdout.trim())) return false;
+      return httpOk(await curlStatus(sh, `localhost:${hostPort}`));
+    }, 10, localRetryDelayMs);
+    if (!localOk) return updateFail('zaktualizowany kontener nie odpowiada lokalnie');
+
+    await notify('🔎 Sprawdzam, czy działa publicznie…');
+    const publicOk = await retry(async () => httpOk(await curlStatus(sh, `https://${app}.s.ciepka.com`)), 10, publicRetryDelayMs);
+    if (!publicOk) return updateFail('publiczny adres nie odpowiada');
+
+    // commit + push the update (best-effort — the repo already exists)
+    await sh(`git -C ${dir} add -A && git -C ${dir} -c user.email=deploybot@s.ciepka.com -c user.name=deploybot commit -q -m "Update (deploybot)" 2>/dev/null; git -C ${dir} push 2>/dev/null || true`);
+    await sh('docker builder prune -f');
+    const link = `https://${app}.s.ciepka.com`;
+    await sendMessage(token, job.chatId, `✅ Zaktualizowano! Twoja aplikacja działa:\n${link}`);
+    return { ok: true, link, updated: true };
+  }
+
+  // ===== NEW build =====
   // 1. name + availability
   const nameOk = validateAppName(app);
   if (!nameOk.ok) return fail(nameOk.error);
-  const exists = await sh(`[ -d ${dir} ] && echo yes || echo no`);
-  if (exists.stdout.trim() === 'yes') return fail('subdomain już zajęty');
+  if (dirExists) return fail('subdomain już zajęty');
   const caddyNow = await readFile(CADDYFILE);
   if (caddyNow.includes(`${app}.s.ciepka.com`)) return fail('subdomain już zajęty (caddy)');
 
@@ -72,7 +146,6 @@ export async function runJob(job, deps) {
   await writeFile(`${dir}/.deploybot/prompt.txt`, buildPrompt(job));
 
   // 4. opencode — stream its full output live to build.log so progress is inspectable
-  const logFile = `${dir}/.deploybot/build.log`;
   await notify('🤖 Agent pisze kod aplikacji… (to może potrwać kilka minut). Podgląd: /status');
   const oc = await sh(`${buildCommand(dir)} > ${logFile} 2>&1`, { timeoutMs });
   if (oc.code !== 0) return fail(`agent nie ukończył budowy (kod ${oc.code})`);
