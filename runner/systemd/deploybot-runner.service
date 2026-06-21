@@ -1,0 +1,16 @@
+[Unit]
+Description=deploybot agent-runner
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/apps/deploybot-runner
+EnvironmentFile=/opt/apps/deploybot-runner/.env
+ExecStart=/usr/bin/node /opt/apps/deploybot-runner/server.js
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
