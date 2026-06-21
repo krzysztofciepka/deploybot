@@ -87,8 +87,8 @@ export async function runJob(job, deps) {
   const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
   if (run.code !== 0) return fail('docker run nie powiódł się');
 
-  // 9. local verify — poll curl only; docker status check is best-effort (container may still
-  //    show empty status in the brief's mock environment, so we rely on curl responsiveness)
+  // 9. local verify — container must report "Up ..." AND answer a local HTTP check; retry while starting.
+  //    An empty/exited status does NOT count as up.
   const localOk = await retry(async () => {
     const up = await sh(`docker ps --filter name=^/${app}$ --format '{{.Status}}'`);
     const isUp = /^Up/.test(up.stdout.trim());
