@@ -52,6 +52,28 @@ async function retry(fn, times, delayMs) {
   return false;
 }
 
+// Tear down an app: Caddy block, container, image, source dir, redeploy script, GitHub repo.
+// Refuses reserved/invalid names so it can never remove n8n, kalkulator-faktury, etc.
+export async function runDestroy(appName, deps) {
+  const { sh, readFile, writeFile } = deps;
+  const v = validateAppName(appName);
+  if (!v.ok) return { ok: false, error: v.error };
+  const dir = `/opt/apps/${appName}`;
+  try {
+    const caddy = await readFile(CADDYFILE, 'utf8');
+    if (String(caddy).includes(`${appName}.s.ciepka.com`)) {
+      await writeFile(CADDYFILE, removeBlock(caddy, appName));
+      await sh('caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy');
+    }
+  } catch (e) { /* caddy missing/unreadable — continue teardown */ }
+  await sh(`docker rm -f ${appName} 2>/dev/null || true`);
+  await sh(`docker image rm -f ${appName} 2>/dev/null || true`);
+  await sh(`rm -rf ${dir} /opt/apps/redeploy-${appName}.sh`);
+  await sh(`gh repo delete ${appName} --yes 2>/dev/null || true`);
+  await sh('docker builder prune -f');
+  return { ok: true, appName };
+}
+
 export async function runJob(job, deps) {
   const { sh, sendMessage, readFile, writeFile, env } = deps;
   const app = job.appName;

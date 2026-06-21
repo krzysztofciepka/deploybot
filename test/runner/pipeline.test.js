@@ -60,3 +60,21 @@ test('public-URL check failure rolls back and reports honest error', async () =>
   assert.match(sent.join('\n'), /(nie|failed|błąd|error)/i);
   assert.ok(calls.some((c) => /docker rm -f clock/.test(c)), 'rolled back the container');
 });
+
+test('runDestroy refuses reserved names and tears down valid apps', async () => {
+  const { runDestroy } = await import('../../runner/lib/pipeline.js');
+  const reserved = await runDestroy('n8n', { sh: async () => ({ code: 0, stdout: '', stderr: '' }), readFile: async () => '', writeFile: async () => {} });
+  assert.equal(reserved.ok, false);
+  const calls = [];
+  const r = await runDestroy('clock', {
+    sh: async (c) => { calls.push(c); return { code: 0, stdout: '', stderr: '' }; },
+    readFile: async () => 'clock.s.ciepka.com {\n}\n',
+    writeFile: async () => {},
+  });
+  assert.equal(r.ok, true);
+  const j = calls.join('\n');
+  assert.match(j, /docker rm -f clock/);
+  assert.match(j, /docker image rm -f clock/);
+  assert.match(j, /rm -rf \/opt\/apps\/clock/);
+  assert.match(j, /gh repo delete clock --yes/);
+});

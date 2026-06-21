@@ -3,7 +3,7 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { JobQueue } from './lib/queue.js';
 import { validateJob } from './lib/payload.js';
-import { runJob } from './lib/pipeline.js';
+import { runJob, runDestroy } from './lib/pipeline.js';
 import { sendMessage } from './lib/telegram.js';
 import { sh } from './lib/exec.js';
 import { recentActivity } from './lib/events.js';
@@ -26,6 +26,14 @@ export function createServer({ queue, processNext, env }) {
         const { jobId, queuePosition } = queue.enqueue(v.job);
         processNext();
         return json(202, { jobId, queuePosition });
+      }
+      if (req.method === 'POST' && req.url === '/destroy') {
+        let parsed;
+        try { parsed = JSON.parse((await body(req)) || '{}'); }
+        catch { return json(400, { error: 'invalid JSON' }); }
+        const appName = String(parsed.appName || '').trim();
+        const r = await runDestroy(appName, { sh, readFile, writeFile });
+        return r.ok ? json(200, r) : json(400, r);
       }
       if (req.method === 'GET' && req.url === '/status') {
         const st = queue.status();
