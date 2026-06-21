@@ -141,7 +141,8 @@
         "chatId": "={{ $json.chatId }}",
         "text": "={{ $json.text }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": ""
         }
       },
       "id": "db000000-0000-4000-8000-000000000006",
