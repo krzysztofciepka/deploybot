@@ -24,3 +24,9 @@ test('removeBlock is the inverse of addBlock', () => {
   assert.equal(hasBlock(removed, 'clock'), false);
   assert.match(removed, /existing\.com/);
 });
+
+test('addBlock/removeBlock tolerate a Buffer (fs.readFile without encoding)', () => {
+  const out = addBlock(Buffer.from('existing.com {\n}\n'), 'clock', 8123);
+  assert.equal(hasBlock(out, 'clock'), true);
+  assert.equal(hasBlock(removeBlock(Buffer.from(out), 'clock'), 'clock'), false);
+});

@@ -12,16 +12,17 @@ export function blockFor(subdomain, hostPort) {
   ].join('\n');
 }
 export function hasBlock(caddyText, subdomain) {
-  return caddyText.includes(mark(subdomain) + '\n');
+  return String(caddyText).includes(mark(subdomain) + '\n');
 }
 export function addBlock(caddyText, subdomain, hostPort) {
+  caddyText = String(caddyText);
   const base = caddyText.endsWith('\n') ? caddyText : caddyText + '\n';
   return base + '\n' + blockFor(subdomain, hostPort) + '\n';
 }
 export function removeBlock(caddyText, subdomain) {
   const start = mark(subdomain);
   const end = mark(subdomain) + ':end';
-  const lines = caddyText.split('\n');
+  const lines = String(caddyText).split('\n');
   const out = [];
   let skipping = false;
   for (const line of lines) {

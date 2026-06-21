@@ -73,7 +73,7 @@ export async function runJob(job, deps) {
   const fail = async (msg) => {
     let caddyText = '';
     if (caddyAdded) {
-      caddyText = removeBlock(await readFile(CADDYFILE), app);
+      caddyText = removeBlock(await readFile(CADDYFILE, 'utf8'), app);
       await writeFile(CADDYFILE, caddyText);
     }
     for (const cmd of rollbackCommands({ appName: app, caddyAdded })) await sh(cmd);
@@ -111,7 +111,7 @@ export async function runJob(job, deps) {
     if (oc.code !== 0) return updateFail(`agent nie ukończył zmian (kod ${oc.code})`);
 
     let containerPort;
-    try { containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`)).containerPort; }
+    try { containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')).containerPort; }
     catch { return updateFail('brak .deploybot/app.json'); }
     if (!Number.isInteger(containerPort)) return updateFail('nieprawidłowy containerPort');
 
@@ -129,7 +129,7 @@ export async function runJob(job, deps) {
     if (run.code !== 0) return updateFail('docker run nie powiódł się');
 
     // make sure Caddy routes this subdomain to the current port
-    const caddyText = await readFile(CADDYFILE);
+    const caddyText = await readFile(CADDYFILE, 'utf8');
     if (!caddyText.includes(`${app}.s.ciepka.com`) || !caddyText.includes(`localhost:${hostPort}`)) {
       await writeFile(CADDYFILE, addBlock(removeBlock(caddyText, app), app, hostPort));
       await sh('caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy');
@@ -159,7 +159,7 @@ export async function runJob(job, deps) {
   const nameOk = validateAppName(app);
   if (!nameOk.ok) return fail(nameOk.error);
   if (dirExists) return fail('subdomain już zajęty');
-  const caddyNow = await readFile(CADDYFILE);
+  const caddyNow = await readFile(CADDYFILE, 'utf8');
   if (caddyNow.includes(`${app}.s.ciepka.com`)) return fail('subdomain już zajęty (caddy)');
 
   // 2. disk
@@ -182,7 +182,7 @@ export async function runJob(job, deps) {
   // 5. app.json
   let containerPort;
   try {
-    containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`)).containerPort;
+    containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')).containerPort;
   } catch { return fail('agent nie zapisał .deploybot/app.json'); }
   if (!Number.isInteger(containerPort)) return fail('nieprawidłowy containerPort');
 
@@ -209,7 +209,7 @@ export async function runJob(job, deps) {
   if (!localOk) return fail('kontener nie odpowiada lokalnie');
 
   // 10. caddy
-  await writeFile(CADDYFILE, addBlock(await readFile(CADDYFILE), app, hostPort));
+  await writeFile(CADDYFILE, addBlock(await readFile(CADDYFILE, 'utf8'), app, hostPort));
   caddyAdded = true;
   const reload = await sh('caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || systemctl reload caddy');
   if (reload.code !== 0) return fail('przeładowanie Caddy nie powiodło się');
