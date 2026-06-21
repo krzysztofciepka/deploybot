@@ -12,6 +12,14 @@ import { waitForAnswer } from './inbox.js';
 const readSafe = async (readFile, f) => { try { return await readFile(f, 'utf8'); } catch { return ''; } };
 const lineCount = (s) => { const l = s.split('\n'); return s.endsWith('\n') ? l.length : l.length - 1; };
 
+// If app.json declared an `env` object, write a docker --env-file and return the flag (else '').
+async function writeEnvFile(env, dir, writeFile) {
+  if (!env || typeof env !== 'object' || Array.isArray(env) || !Object.keys(env).length) return '';
+  const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
+  await writeFile(`${dir}/.deploybot/app.env`, lines + '\n');
+  return `--env-file ${dir}/.deploybot/app.env`;
+}
+
 // Run the agent while live-streaming its opencode JSON events to Telegram.
 // Reads the growing build.log, formats new complete lines, and sends batched digests.
 // Starts from the current end of the log so resumed turns don't re-stream old events.
@@ -165,10 +173,12 @@ export async function runJob(job, deps) {
     const ar = await runAgentTurns({ deps, dir, logFile, timeoutMs, notify, job, env, model: env.BUILD_MODEL, setStatus: deps.setStatus, initialCmd: `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1` });
     if (!ar.ok) return updateFail(ar.error);
 
-    let containerPort;
-    try { containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')).containerPort; }
+    let appJson;
+    try { appJson = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')); }
     catch { return updateFail('brak .deploybot/app.json'); }
+    const containerPort = appJson.containerPort;
     if (!Number.isInteger(containerPort)) return updateFail('nieprawidłowy containerPort');
+    const envArg = await writeEnvFile(appJson.env, dir, writeFile);
 
     await notify('🔨 Buduję nowy obraz…');
     const build = await sh(`docker build -t ${app} ${dir} >> ${logFile} 2>&1`, { timeoutMs });
@@ -180,7 +190,7 @@ export async function runJob(job, deps) {
     }
     await notify('🚀 Podmieniam kontener…');
     await sh(`docker rm -f ${app} 2>/dev/null || true`);
-    const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
+    const run = await sh(`docker run -d --restart unless-stopped --name ${app} ${envArg} -p ${hostPort}:${containerPort} ${app}`);
     if (run.code !== 0) return updateFail('docker run nie powiódł się: ' + (run.stderr || '').trim().slice(-300));
 
     // make sure Caddy routes this subdomain to the current port
@@ -234,12 +244,13 @@ export async function runJob(job, deps) {
   const ar = await runAgentTurns({ deps, dir, logFile, timeoutMs, notify, job, env, model: env.BUILD_MODEL, setStatus: deps.setStatus, initialCmd: `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1` });
   if (!ar.ok) return fail(ar.error);
 
-  // 5. app.json
-  let containerPort;
-  try {
-    containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')).containerPort;
-  } catch { return fail('agent nie zapisał .deploybot/app.json'); }
+  // 5. app.json (containerPort + optional runtime env)
+  let appJson;
+  try { appJson = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')); }
+  catch { return fail('agent nie zapisał .deploybot/app.json'); }
+  const containerPort = appJson.containerPort;
   if (!Number.isInteger(containerPort)) return fail('nieprawidłowy containerPort');
+  const envArg = await writeEnvFile(appJson.env, dir, writeFile);
 
   // 6. build
   await notify('🔨 Kod gotowy — buduję obraz Dockera…');
@@ -250,7 +261,7 @@ export async function runJob(job, deps) {
   await notify('🚀 Uruchamiam kontener i podłączam do Caddy…');
   const ps = await sh(`docker ps --format '{{.Ports}}'`);
   const hostPort = pickPort(usedPorts(ps.stdout));
-  const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
+  const run = await sh(`docker run -d --restart unless-stopped --name ${app} ${envArg} -p ${hostPort}:${containerPort} ${app}`);
   if (run.code !== 0) return fail('docker run nie powiódł się: ' + (run.stderr || '').trim().slice(-300));
 
   // 9. local verify — container must report "Up ..." AND answer a local HTTP check; retry while starting.
@@ -276,7 +287,7 @@ export async function runJob(job, deps) {
 
   // 12. redeploy script + github (best-effort)
   await writeFile(`/opt/apps/redeploy-${app}.sh`,
-    `#!/usr/bin/env bash\nset -e\ncd ${dir}\ngit pull --ff-only || true\ndocker build -t ${app} ${dir}\ndocker rm -f ${app}\ndocker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}\n`);
+    `#!/usr/bin/env bash\nset -e\ncd ${dir}\ngit pull --ff-only || true\ndocker build -t ${app} ${dir}\ndocker rm -f ${app}\ndocker run -d --restart unless-stopped --name ${app} ${envArg} -p ${hostPort}:${containerPort} ${app}\n`);
   await sh(`chmod +x /opt/apps/redeploy-${app}.sh`);
   let repo = null;
   for (const cmd of pushCommands(app, dir)) { const r = await sh(cmd); if (r.code !== 0) break; }
