@@ -126,7 +126,7 @@ export async function runJob(job, deps) {
     await notify('🚀 Podmieniam kontener…');
     await sh(`docker rm -f ${app} 2>/dev/null || true`);
     const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
-    if (run.code !== 0) return updateFail('docker run nie powiódł się');
+    if (run.code !== 0) return updateFail('docker run nie powiódł się: ' + (run.stderr || '').trim().slice(-300));
 
     // make sure Caddy routes this subdomain to the current port
     const caddyText = await readFile(CADDYFILE, 'utf8');
@@ -196,7 +196,7 @@ export async function runJob(job, deps) {
   const ps = await sh(`docker ps --format '{{.Ports}}'`);
   const hostPort = pickPort(usedPorts(ps.stdout));
   const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
-  if (run.code !== 0) return fail('docker run nie powiódł się');
+  if (run.code !== 0) return fail('docker run nie powiódł się: ' + (run.stderr || '').trim().slice(-300));
 
   // 9. local verify — container must report "Up ..." AND answer a local HTTP check; retry while starting.
   //    An empty/exited status does NOT count as up.
