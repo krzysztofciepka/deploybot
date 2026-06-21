@@ -8,5 +8,5 @@ test('creates a private repo and pushes', () => {
   assert.match(joined, /git init/);
   assert.match(joined, /gh repo create clock --private/);
   assert.match(joined, /--source=\/opt\/apps\/clock/);
-  assert.match(joined, /git -C \/opt\/apps\/clock push/);
+  assert.match(joined, /--push/);
 });
