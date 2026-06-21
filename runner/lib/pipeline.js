@@ -6,6 +6,35 @@ import { availableBytes, hasHeadroom } from './disk.js';
 import { buildPrompt, buildUpdatePrompt, buildCommand } from './opencode.js';
 import { pushCommands } from './github.js';
 import { rollbackCommands } from './rollback.js';
+import { formatEvent } from './events.js';
+
+// Run the agent while live-streaming its opencode JSON events to Telegram.
+// Reads the growing build.log, formats new complete lines, and sends batched digests.
+async function runAgentStreaming(deps, cmd, logFile, timeoutMs, notify) {
+  const { sh, readFile } = deps;
+  const run = sh(cmd, { timeoutMs });
+  let offset = 0, pumping = false;
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    try {
+      let content = '';
+      try { content = await readFile(logFile, 'utf8'); } catch { return; }
+      const lines = content.split('\n');
+      const complete = content.endsWith('\n') ? lines.length : lines.length - 1;
+      const batch = [];
+      for (let i = offset; i < complete; i++) { const f = formatEvent(lines[i]); if (f) batch.push(f); }
+      offset = complete;
+      while (batch.length) await notify(batch.splice(0, 12).join('\n'));
+    } finally { pumping = false; }
+  };
+  const intervalMs = Number(deps.env?.STREAM_INTERVAL_MS || 15000);
+  const timer = setInterval(() => { pump().catch(() => {}); }, intervalMs);
+  let oc;
+  try { oc = await run; } finally { clearInterval(timer); }
+  await pump(); // final flush
+  return oc;
+}
 
 const CADDYFILE = '/etc/caddy/Caddyfile';
 const httpOk = (s) => /^[23]\d\d/.test((s || '').trim());
@@ -77,8 +106,8 @@ export async function runJob(job, deps) {
 
     await sh(`mkdir -p ${dir}/.deploybot`);
     await writeFile(`${dir}/.deploybot/prompt.txt`, buildUpdatePrompt(job));
-    await notify('🤖 Agent wprowadza zmiany… (podgląd: /status)');
-    const oc = await sh(`${buildCommand(dir)} > ${logFile} 2>&1`, { timeoutMs });
+    await notify('🤖 Agent wprowadza zmiany — na żywo poniżej. (/status = podgląd)');
+    const oc = await runAgentStreaming(deps, `${buildCommand(dir)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
     if (oc.code !== 0) return updateFail(`agent nie ukończył zmian (kod ${oc.code})`);
 
     let containerPort;
@@ -145,9 +174,9 @@ export async function runJob(job, deps) {
   await sh(`mkdir -p ${dir}/.deploybot`);
   await writeFile(`${dir}/.deploybot/prompt.txt`, buildPrompt(job));
 
-  // 4. opencode — stream its full output live to build.log so progress is inspectable
-  await notify('🤖 Agent pisze kod aplikacji… (to może potrwać kilka minut). Podgląd: /status');
-  const oc = await sh(`${buildCommand(dir)} > ${logFile} 2>&1`, { timeoutMs });
+  // 4. opencode — live-stream its JSON inference events to Telegram (and to build.log)
+  await notify('🤖 Agent zaczął pracę — pokażę na żywo, co robi. (/status = podgląd)');
+  const oc = await runAgentStreaming(deps, `${buildCommand(dir)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
   if (oc.code !== 0) return fail(`agent nie ukończył budowy (kod ${oc.code})`);
 
   // 5. app.json

@@ -6,6 +6,7 @@ import { validateJob } from './lib/payload.js';
 import { runJob } from './lib/pipeline.js';
 import { sendMessage } from './lib/telegram.js';
 import { sh } from './lib/exec.js';
+import { recentActivity } from './lib/events.js';
 import { readFile, writeFile } from 'node:fs/promises';
 
 function body(req) {
@@ -32,7 +33,7 @@ export function createServer({ queue, processNext, env }) {
         if (st.current && st.current.job && st.current.job.appName) {
           try {
             const log = await readFile(`/opt/apps/${st.current.job.appName}/.deploybot/build.log`, 'utf8');
-            st.currentLog = log.split('\n').filter(Boolean).slice(-12).join('\n');
+            st.currentLog = recentActivity(log, 10).join('\n');
           } catch { st.currentLog = ''; }
         }
         return json(200, st);

@@ -48,6 +48,7 @@ export function buildUpdatePrompt(job) {
 }
 
 export function buildCommand(workdir) {
-  // opencode reads OPENCODE_API_KEY / config from the environment; prompt is piped via a heredoc file.
-  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)"`;
+  // --format json streams structured LLM-inference events to stdout (and avoids the TUI
+  // renderer hanging when run headless without a TTY). Prompt is read from the workspace.
+  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --format json`;
 }
