@@ -47,6 +47,13 @@ export function createServer({ queue, processNext, env }) {
         }
         return json(200, st);
       }
+      if (req.method === 'POST' && req.url === '/notify') {
+        let parsed;
+        try { parsed = JSON.parse((await body(req)) || '{}'); }
+        catch { return json(400, { error: 'invalid JSON' }); }
+        const r = await sendMessage(env.TELEGRAM_BOT_TOKEN, parsed.chatId, String(parsed.text ?? ''));
+        return json(200, r);
+      }
       if (req.method === 'POST' && req.url === '/answer') {
         let parsed;
         try { parsed = JSON.parse((await body(req)) || '{}'); }

@@ -138,27 +138,27 @@
     },
     {
       "parameters": {
-        "chatId": "={{ $json.chatId }}",
-        "text": "={{ $json.text }}",
-        "additionalFields": {
-          "appendAttribution": false,
-          "parse_mode": ""
+        "method": "POST",
+        "url": "http://172.17.0.1:8787/notify",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chatId: $json.chatId, text: $json.text }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
         }
       },
       "id": "db000000-0000-4000-8000-000000000006",
       "name": "Telegram Send",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         440,
         400
-      ],
-      "credentials": {
-        "telegramApi": {
-          "id": "deploybotcredtg001",
-          "name": "Telegram deploybot Bot"
-        }
-      }
+      ]
     }
   ],
   "connections": {
