@@ -78,7 +78,7 @@ export async function runJob(job, deps) {
   if (!Number.isInteger(containerPort)) return fail('nieprawidłowy containerPort');
 
   // 6. build
-  const build = await sh(`docker build -t ${app} ${dir}`);
+  const build = await sh(`docker build -t ${app} ${dir}`, { timeoutMs });
   if (build.code !== 0) return fail('docker build nie powiódł się');
 
   // 7-8. port + run

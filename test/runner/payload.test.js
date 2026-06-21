@@ -26,3 +26,15 @@ test('defaults public to true and answers to {}', () => {
   assert.equal(r.job.public, true);
   assert.deepEqual(r.job.answers, {});
 });
+
+test('rejects reserved subdomain (n8n)', () => {
+  const r = validateJob({ chatId: 1, description: 'x', subdomain: 'n8n' });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /reserved/);
+});
+
+test('rejects invalid subdomain label with shell-injection chars', () => {
+  const r = validateJob({ chatId: 1, description: 'x', subdomain: 'Bad Name; rm -rf /' });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /invalid subdomain label/);
+});

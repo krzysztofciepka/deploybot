@@ -17,7 +17,10 @@ export function createServer({ queue, processNext, env }) {
     const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
     try {
       if (req.method === 'POST' && req.url === '/jobs') {
-        const v = validateJob(JSON.parse((await body(req)) || '{}'));
+        let parsed;
+        try { parsed = JSON.parse((await body(req)) || '{}'); }
+        catch { return json(400, { error: 'invalid JSON' }); }
+        const v = validateJob(parsed);
         if (!v.ok) return json(400, { error: v.error });
         const { jobId, queuePosition } = queue.enqueue(v.job);
         processNext();
