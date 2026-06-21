@@ -69,9 +69,9 @@ export async function runDestroy(appName, deps) {
   await sh(`docker rm -f ${appName} 2>/dev/null || true`);
   await sh(`docker image rm -f ${appName} 2>/dev/null || true`);
   await sh(`rm -rf ${dir} /opt/apps/redeploy-${appName}.sh`);
-  await sh(`gh repo delete ${appName} --yes 2>/dev/null || true`);
+  const gh = await sh(`gh repo delete ${appName} --yes 2>&1`); // needs delete_repo scope; non-fatal
   await sh('docker builder prune -f');
-  return { ok: true, appName };
+  return { ok: true, appName, repoDeleted: gh.code === 0 };
 }
 
 export async function runJob(job, deps) {
