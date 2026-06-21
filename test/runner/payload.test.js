@@ -15,6 +15,12 @@ test('rejects missing description', () => {
   assert.match(r.error, /description/);
 });
 
+test('accepts numeric-string chatId (from n8n)', () => {
+  const r = validateJob({ chatId: '42', description: 'x', subdomain: 'clock' });
+  assert.equal(r.ok, true);
+  assert.equal(r.job.chatId, 42);
+});
+
 test('rejects missing chatId', () => {
   const r = validateJob({ description: 'x', subdomain: 'clock' });
   assert.equal(r.ok, false);
