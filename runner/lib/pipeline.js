@@ -91,7 +91,7 @@ export async function runJob(job, deps) {
   //    show empty status in the brief's mock environment, so we rely on curl responsiveness)
   const localOk = await retry(async () => {
     const up = await sh(`docker ps --filter name=^/${app}$ --format '{{.Status}}'`);
-    const isUp = /^Up/.test(up.stdout.trim()) || up.stdout.trim() === '';
+    const isUp = /^Up/.test(up.stdout.trim());
     if (!isUp) return false;
     return httpOk(await curlStatus(sh, `localhost:${hostPort}`));
   }, 10, localRetryDelayMs);
