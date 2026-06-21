@@ -35,6 +35,11 @@ export async function runJob(job, deps) {
   const publicRetryDelayMs = Number(env.RETRY_DELAY_PUBLIC_MS || 3000);
   let caddyAdded = false;
 
+  // milestone notifier — best-effort, never lets a Telegram hiccup break the build
+  const notify = async (m) => {
+    try { await sendMessage(token, job.chatId, m); } catch (e) { /* ignore */ }
+  };
+
   const fail = async (msg) => {
     let caddyText = '';
     if (caddyAdded) {
@@ -66,8 +71,10 @@ export async function runJob(job, deps) {
   await sh(`mkdir -p ${dir}/.deploybot`);
   await writeFile(`${dir}/.deploybot/prompt.txt`, buildPrompt(job));
 
-  // 4. opencode
-  const oc = await sh(buildCommand(dir), { timeoutMs });
+  // 4. opencode — stream its full output live to build.log so progress is inspectable
+  const logFile = `${dir}/.deploybot/build.log`;
+  await notify('🤖 Agent pisze kod aplikacji… (to może potrwać kilka minut). Podgląd: /status');
+  const oc = await sh(`${buildCommand(dir)} > ${logFile} 2>&1`, { timeoutMs });
   if (oc.code !== 0) return fail(`agent nie ukończył budowy (kod ${oc.code})`);
 
   // 5. app.json
@@ -78,10 +85,12 @@ export async function runJob(job, deps) {
   if (!Number.isInteger(containerPort)) return fail('nieprawidłowy containerPort');
 
   // 6. build
-  const build = await sh(`docker build -t ${app} ${dir}`, { timeoutMs });
+  await notify('🔨 Kod gotowy — buduję obraz Dockera…');
+  const build = await sh(`docker build -t ${app} ${dir} >> ${logFile} 2>&1`, { timeoutMs });
   if (build.code !== 0) return fail('docker build nie powiódł się');
 
   // 7-8. port + run
+  await notify('🚀 Uruchamiam kontener i podłączam do Caddy…');
   const ps = await sh(`docker ps --format '{{.Ports}}'`);
   const hostPort = pickPort(usedPorts(ps.stdout));
   const run = await sh(`docker run -d --restart unless-stopped --name ${app} -p ${hostPort}:${containerPort} ${app}`);
@@ -104,6 +113,7 @@ export async function runJob(job, deps) {
   if (reload.code !== 0) return fail('przeładowanie Caddy nie powiodło się');
 
   // 11. public verify
+  await notify('🔎 Sprawdzam, czy aplikacja odpowiada publicznie…');
   const publicOk = await retry(async () => httpOk(await curlStatus(sh, `https://${app}.s.ciepka.com`)), 10, publicRetryDelayMs);
   if (!publicOk) return fail('publiczny adres nie odpowiada (możliwe DNS/HTTPS)');
 

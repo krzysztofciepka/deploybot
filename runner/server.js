@@ -26,7 +26,17 @@ export function createServer({ queue, processNext, env }) {
         processNext();
         return json(202, { jobId, queuePosition });
       }
-      if (req.method === 'GET' && req.url === '/status') return json(200, queue.status());
+      if (req.method === 'GET' && req.url === '/status') {
+        const st = queue.status();
+        // attach a tail of the running job's live build log so progress is visible
+        if (st.current && st.current.job && st.current.job.appName) {
+          try {
+            const log = await readFile(`/opt/apps/${st.current.job.appName}/.deploybot/build.log`, 'utf8');
+            st.currentLog = log.split('\n').filter(Boolean).slice(-12).join('\n');
+          } catch { st.currentLog = ''; }
+        }
+        return json(200, st);
+      }
       if (req.method === 'GET' && req.url.startsWith('/jobs/')) {
         const rec = queue.get(req.url.slice('/jobs/'.length));
         return rec ? json(200, rec) : json(404, { error: 'not found' });
