@@ -47,8 +47,10 @@ export function buildUpdatePrompt(job) {
   ].join('\n');
 }
 
-export function buildCommand(workdir) {
+export function buildCommand(workdir, model) {
   // --format json streams structured LLM-inference events to stdout (and avoids the TUI
   // renderer hanging when run headless without a TTY). Prompt is read from the workspace.
-  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --format json < /dev/null`;
+  // < /dev/null: a piped stdin that never closes makes opencode hang at init.
+  const m = model || 'kimi-k2.7-code';
+  return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --model opencode-go/${m} --format json < /dev/null`;
 }

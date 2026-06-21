@@ -107,7 +107,7 @@ export async function runJob(job, deps) {
     await sh(`mkdir -p ${dir}/.deploybot`);
     await writeFile(`${dir}/.deploybot/prompt.txt`, buildUpdatePrompt(job));
     await notify('🤖 Agent wprowadza zmiany — na żywo poniżej. (/status = podgląd)');
-    const oc = await runAgentStreaming(deps, `${buildCommand(dir)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
+    const oc = await runAgentStreaming(deps, `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
     if (oc.code !== 0) return updateFail(`agent nie ukończył zmian (kod ${oc.code})`);
 
     let containerPort;
@@ -176,7 +176,7 @@ export async function runJob(job, deps) {
 
   // 4. opencode — live-stream its JSON inference events to Telegram (and to build.log)
   await notify('🤖 Agent zaczął pracę — pokażę na żywo, co robi. (/status = podgląd)');
-  const oc = await runAgentStreaming(deps, `${buildCommand(dir)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
+  const oc = await runAgentStreaming(deps, `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
   if (oc.code !== 0) return fail(`agent nie ukończył budowy (kod ${oc.code})`);
 
   // 5. app.json

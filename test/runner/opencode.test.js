@@ -16,6 +16,7 @@ test('prompt embeds description, answers, and the hard contract', () => {
 test('command runs opencode headless in the workdir', () => {
   const c = buildCommand('/opt/apps/clock');
   assert.match(c, /opencode run/);
+  assert.match(c, /--model opencode-go\/kimi-k2\.7-code/);
   assert.match(c, /\/opt\/apps\/clock/);
 });
 
