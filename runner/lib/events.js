@@ -20,6 +20,32 @@ export function formatEvent(line) {
   return null;
 }
 
+// First sessionID seen in the event stream (needed to resume the session with `--session`).
+export function sessionIdFrom(logText) {
+  for (const line of String(logText).split('\n')) {
+    try {
+      const e = JSON.parse(line);
+      if (e.sessionID) return e.sessionID;
+      if (e.part && e.part.sessionID) return e.part.sessionID;
+    } catch { /* skip */ }
+  }
+  return null;
+}
+
+// The last `ASK: <question>` the agent emitted in this chunk of assistant text, or null.
+export function findAsk(logText) {
+  let found = null;
+  for (const line of String(logText).split('\n')) {
+    let e;
+    try { e = JSON.parse(line); } catch { continue; }
+    if (e.type !== 'text') continue;
+    const text = String((e.part && e.part.text) || '');
+    const m = text.match(/ASK:\s*([^\n]+)/);
+    if (m) found = m[1].trim();
+  }
+  return found;
+}
+
 // Decode a chunk of build.log into the last `n` readable progress lines (for /status).
 export function recentActivity(logText, n = 8) {
   const out = [];

@@ -28,8 +28,21 @@ export class JobQueue {
     const queuePosition = this.records.filter((r) => r.status === 'pending').length;
     return { jobId, queuePosition };
   }
+  failStale() {
+    // On startup, any job left 'running'/'awaiting_input' is orphaned (in-memory waiters are gone).
+    let changed = false;
+    for (const r of this.records) {
+      if (r.status === 'running' || r.status === 'awaiting_input') {
+        r.status = 'failed';
+        r.error = 'runner restarted';
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+    return this;
+  }
   next() {
-    if (this.records.some((r) => r.status === 'running')) return null;
+    if (this.records.some((r) => r.status === 'running' || r.status === 'awaiting_input')) return null;
     const rec = this.records.find((r) => r.status === 'pending');
     if (!rec) return null;
     rec.status = 'running';
@@ -49,7 +62,7 @@ export class JobQueue {
     this.save();
   }
   status() {
-    const current = this.records.find((r) => r.status === 'running') || null;
+    const current = this.records.find((r) => r.status === 'running' || r.status === 'awaiting_input') || null;
     const pending = this.records.filter((r) => r.status === 'pending');
     const recent = this.records.slice(-5).reverse();
     return { current, pending, recent };

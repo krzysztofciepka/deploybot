@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatEvent, recentActivity } from '../../runner/lib/events.js';
+import { formatEvent, recentActivity, sessionIdFrom, findAsk } from '../../runner/lib/events.js';
 
 test('formats tool_use events by tool', () => {
   assert.equal(formatEvent(JSON.stringify({ type: 'tool_use', part: { tool: 'skill', state: { input: { name: 'test-driven-development' } } } })), '🧠 skill: test-driven-development');
@@ -23,4 +23,15 @@ test('recentActivity returns the last N readable lines', () => {
     JSON.stringify({ type: 'text', part: { text: 'hi' } }),
   ].join('\n');
   assert.deepEqual(recentActivity(log, 8), ['📖 read: a', '💬 hi']);
+});
+
+test('sessionIdFrom and findAsk parse the event stream', () => {
+  const log = [
+    JSON.stringify({ type: 'step_start', sessionID: 'ses_abc', part: {} }),
+    JSON.stringify({ type: 'text', part: { text: 'thinking...' } }),
+    JSON.stringify({ type: 'text', part: { text: 'ASK: what API key should I use?' } }),
+  ].join('\n');
+  assert.equal(sessionIdFrom(log), 'ses_abc');
+  assert.equal(findAsk(log), 'what API key should I use?');
+  assert.equal(findAsk(JSON.stringify({ type: 'text', part: { text: 'no question here' } })), null);
 });

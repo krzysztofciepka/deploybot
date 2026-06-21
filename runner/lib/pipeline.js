@@ -3,17 +3,22 @@ import { validateAppName } from './names.js';
 import { addBlock, removeBlock } from './caddy.js';
 import { usedPorts, pickPort } from './ports.js';
 import { availableBytes, hasHeadroom } from './disk.js';
-import { buildPrompt, buildUpdatePrompt, buildCommand } from './opencode.js';
+import { buildPrompt, buildUpdatePrompt, buildCommand, resumeCommand } from './opencode.js';
 import { pushCommands } from './github.js';
 import { rollbackCommands } from './rollback.js';
-import { formatEvent } from './events.js';
+import { formatEvent, sessionIdFrom, findAsk } from './events.js';
+import { waitForAnswer } from './inbox.js';
+
+const readSafe = async (readFile, f) => { try { return await readFile(f, 'utf8'); } catch { return ''; } };
+const lineCount = (s) => { const l = s.split('\n'); return s.endsWith('\n') ? l.length : l.length - 1; };
 
 // Run the agent while live-streaming its opencode JSON events to Telegram.
 // Reads the growing build.log, formats new complete lines, and sends batched digests.
+// Starts from the current end of the log so resumed turns don't re-stream old events.
 async function runAgentStreaming(deps, cmd, logFile, timeoutMs, notify) {
   const { sh, readFile } = deps;
+  let offset = lineCount(await readSafe(readFile, logFile)), pumping = false;
   const run = sh(cmd, { timeoutMs });
-  let offset = 0, pumping = false;
   const pump = async () => {
     if (pumping) return;
     pumping = true;
@@ -34,6 +39,34 @@ async function runAgentStreaming(deps, cmd, logFile, timeoutMs, notify) {
   try { oc = await run; } finally { clearInterval(timer); }
   await pump(); // final flush
   return oc;
+}
+
+// Drive opencode turn-by-turn: stream each turn; if the agent emits `ASK:`, relay it to the
+// user, wait for an answer (with timeout), then resume the same session. Loops until the agent
+// finishes a turn without asking. Returns { ok, error? }.
+async function runAgentTurns({ deps, dir, logFile, timeoutMs, notify, job, env, initialCmd, model, setStatus }) {
+  const maxTurns = Number(env.MAX_TURNS || 25);
+  const answerTimeoutMs = Number(env.ANSWER_TIMEOUT_MS || 1800000); // 30 min
+  let cmd = initialCmd;
+  let sessionId = null;
+  for (let turn = 0; turn < maxTurns; turn++) {
+    const before = (await readSafe(deps.readFile, logFile)).length;
+    const oc = await runAgentStreaming(deps, cmd, logFile, timeoutMs, notify);
+    const full = await readSafe(deps.readFile, logFile);
+    if (!sessionId) sessionId = sessionIdFrom(full);
+    if (oc.code !== 0) return { ok: false, error: `agent nie ukończył (kod ${oc.code})` };
+    const ask = findAsk(full.slice(before));
+    if (!ask) return { ok: true };
+    if (!sessionId) return { ok: false, error: 'agent zapytał, ale brak identyfikatora sesji' };
+    if (setStatus) setStatus('awaiting_input', { question: ask });
+    await notify(`❓ Agent pyta:\n${ask}\n\nOdpisz w czacie, aby kontynuować.`);
+    const answer = await waitForAnswer(job.chatId, answerTimeoutMs);
+    if (setStatus) setStatus('running', {});
+    if (answer === null) return { ok: false, error: 'brak odpowiedzi na pytanie (timeout)' };
+    await deps.writeFile(`${dir}/.deploybot/answer.txt`, answer);
+    cmd = `${resumeCommand(dir, sessionId, model)} >> ${logFile} 2>&1`;
+  }
+  return { ok: false, error: 'za dużo tur (przekroczono limit)' };
 }
 
 const CADDYFILE = '/etc/caddy/Caddyfile';
@@ -128,9 +161,9 @@ export async function runJob(job, deps) {
 
     await sh(`mkdir -p ${dir}/.deploybot`);
     await writeFile(`${dir}/.deploybot/prompt.txt`, buildUpdatePrompt(job));
-    await notify('🤖 Agent wprowadza zmiany — na żywo poniżej. (/status = podgląd)');
-    const oc = await runAgentStreaming(deps, `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
-    if (oc.code !== 0) return updateFail(`agent nie ukończył zmian (kod ${oc.code})`);
+    await notify('🤖 Agent wprowadza zmiany — na żywo poniżej. Może zadać pytanie — odpisz w czacie. (/status = podgląd)');
+    const ar = await runAgentTurns({ deps, dir, logFile, timeoutMs, notify, job, env, model: env.BUILD_MODEL, setStatus: deps.setStatus, initialCmd: `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1` });
+    if (!ar.ok) return updateFail(ar.error);
 
     let containerPort;
     try { containerPort = JSON.parse(await readFile(`${dir}/.deploybot/app.json`, 'utf8')).containerPort; }
@@ -197,9 +230,9 @@ export async function runJob(job, deps) {
   await writeFile(`${dir}/.deploybot/prompt.txt`, buildPrompt(job));
 
   // 4. opencode — live-stream its JSON inference events to Telegram (and to build.log)
-  await notify('🤖 Agent zaczął pracę — pokażę na żywo, co robi. (/status = podgląd)');
-  const oc = await runAgentStreaming(deps, `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1`, logFile, timeoutMs, notify);
-  if (oc.code !== 0) return fail(`agent nie ukończył budowy (kod ${oc.code})`);
+  await notify('🤖 Agent zaczął pracę — na żywo poniżej. Może zadać pytanie — odpisz w czacie. (/status = podgląd)');
+  const ar = await runAgentTurns({ deps, dir, logFile, timeoutMs, notify, job, env, model: env.BUILD_MODEL, setStatus: deps.setStatus, initialCmd: `${buildCommand(dir, env.BUILD_MODEL)} > ${logFile} 2>&1` });
+  if (!ar.ok) return fail(ar.error);
 
   // 5. app.json
   let containerPort;

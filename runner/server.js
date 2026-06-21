@@ -7,6 +7,7 @@ import { runJob, runDestroy } from './lib/pipeline.js';
 import { sendMessage } from './lib/telegram.js';
 import { sh } from './lib/exec.js';
 import { recentActivity } from './lib/events.js';
+import { provideAnswer } from './lib/inbox.js';
 import { readFile, writeFile } from 'node:fs/promises';
 
 function body(req) {
@@ -46,6 +47,13 @@ export function createServer({ queue, processNext, env }) {
         }
         return json(200, st);
       }
+      if (req.method === 'POST' && req.url === '/answer') {
+        let parsed;
+        try { parsed = JSON.parse((await body(req)) || '{}'); }
+        catch { return json(400, { error: 'invalid JSON' }); }
+        const ok = provideAnswer(parsed.chatId, String(parsed.answer ?? ''));
+        return ok ? json(200, { ok: true }) : json(409, { error: 'no question is awaiting an answer' });
+      }
       if (req.method === 'GET' && req.url.startsWith('/jobs/')) {
         const rec = queue.get(req.url.slice('/jobs/'.length));
         return rec ? json(200, rec) : json(404, { error: 'not found' });
@@ -65,7 +73,11 @@ export function makeWorker(queue, env) {
     try {
       let rec;
       while ((rec = queue.next())) {
-        const deps = { sh, sendMessage, readFile, writeFile, env, now: () => Date.now() };
+        const jobId = rec.jobId;
+        const deps = {
+          sh, sendMessage, readFile, writeFile, env, now: () => Date.now(),
+          setStatus: (status, patch) => queue.setStatus(jobId, status, patch),
+        };
         try {
           const r = await runJob(rec.job, deps);
           queue.setStatus(rec.jobId, r.ok ? 'success' : 'failed', { link: r.link || null, repo: r.repo || null, error: r.error || null });
@@ -79,7 +91,7 @@ export function makeWorker(queue, env) {
 
 function main() {
   const env = process.env;
-  const queue = new JobQueue('/opt/apps/deploybot-runner/jobs.json').load();
+  const queue = new JobQueue('/opt/apps/deploybot-runner/jobs.json').load().failStale();
   const processNext = makeWorker(queue, env);
   const server = createServer({ queue, processNext, env });
   server.listen(8787, '172.17.0.1', () => console.log('deploybot-runner on 172.17.0.1:8787'));

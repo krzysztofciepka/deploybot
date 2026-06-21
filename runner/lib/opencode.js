@@ -4,8 +4,13 @@ export function buildPrompt(job) {
     .join('\n') || '(none)';
   return [
     'You are an autonomous engineering agent. Build a small, self-contained web app from the brief below.',
-    'Operate fully autonomously: when the superpowers skills (brainstorming, writing-plans) ask for approval,',
-    'choose the best option yourself and proceed. NEVER wait for human input. Use TDD.',
+    'Operate autonomously and make reasonable assumptions; when the superpowers skills (brainstorming,',
+    'writing-plans) ask for approval, choose the best option yourself and proceed. Use TDD.',
+    '',
+    'ASKING THE USER: If you genuinely need a decision only the user can make, or data only they have',
+    '(an API key/token, credentials, an account id, a URL, or a choice between real alternatives), output',
+    'exactly one line `ASK: <your question>` and STOP your turn — do NOT guess secrets or fabricate',
+    'credentials. The user will reply and you will continue in the same session. Ask only when necessary.',
     '',
     'HARD CONTRACT — your task is not done until ALL of these are true:',
     '1. The app builds and runs from a `Dockerfile` at the repo root.',
@@ -31,7 +36,9 @@ export function buildUpdatePrompt(job) {
   return [
     'You are an autonomous engineering agent. UPDATE the existing web app in this directory per the change request below.',
     'The app source, its `Dockerfile`, and `.deploybot/app.json` already exist here — modify them in place.',
-    'Operate fully autonomously: never wait for human input; choose the best option and proceed. Use TDD.',
+    'Operate autonomously and choose the best option; use TDD. If you genuinely need a decision only the',
+    'user can make or data only they have (token, credentials, a real choice), output one line',
+    '`ASK: <your question>` and STOP — do not guess secrets. The user replies and you continue.',
     '',
     'HARD CONTRACT — your task is not done until ALL of these remain true after your changes:',
     '1. The app still builds and runs from the `Dockerfile` at the repo root.',
@@ -53,4 +60,10 @@ export function buildCommand(workdir, model) {
   // < /dev/null: a piped stdin that never closes makes opencode hang at init.
   const m = model || 'kimi-k2.7-code';
   return `cd ${workdir} && opencode run "$(cat .deploybot/prompt.txt)" --model opencode-go/${m} --format json < /dev/null`;
+}
+
+// Resume an existing opencode session with the user's answer (read from a file to avoid shell-escaping).
+export function resumeCommand(workdir, sessionId, model) {
+  const m = model || 'kimi-k2.7-code';
+  return `cd ${workdir} && opencode run --session ${sessionId} "$(cat .deploybot/answer.txt)" --model opencode-go/${m} --format json < /dev/null`;
 }
