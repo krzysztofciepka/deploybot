@@ -6,7 +6,10 @@ export function isValidSubdomain(s) {
 }
 export function extractSubdomain(text) {
   const after = String(text).match(/(?:subdomain|domena|adres)\s*[:=]?\s*([a-z0-9-]+)/i);
-  if (after) return after[1];
+  if (after) {
+    const w = after[1].toLowerCase();
+    if (isValidSubdomain(w)) return w;
+  }
   const lower = String(text).toLowerCase();
   // Try to find a domain name that comes after intent words like "use", "want", "name", "call"
   const afterIntent = lower.match(/(?:use|want|name|call|call it|choose|named?)\s+([a-z0-9-]+)/i);

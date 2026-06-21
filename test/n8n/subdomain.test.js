@@ -12,6 +12,11 @@ test('extracts a label from a free-form reply', () => {
   assert.equal(extractSubdomain('subdomain: my-app'), 'my-app');
   assert.equal(extractSubdomain('???'), null);
 });
+
+test('validates explicit-prefix capture (lowercase + isValidSubdomain check)', () => {
+  assert.equal(extractSubdomain('subdomain: Clock'), 'clock');  // uppercase gets lowercased & validated
+  assert.equal(extractSubdomain('domena: VALID-APP'), 'valid-app');      // i18n keyword, uppercase lowercased, dash preserved
+});
 test('allAnswered checks coverage', () => {
   assert.equal(allAnswered(['q1', 'q2'], { q1: 'a', q2: 'b' }), true);
   assert.equal(allAnswered(['q1', 'q2'], { q1: 'a' }), false);
